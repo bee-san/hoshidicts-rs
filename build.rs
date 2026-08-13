@@ -1,4 +1,5 @@
 use std::env;
+use std::fs;
 use std::path::Path;
 use std::process::Command;
 
@@ -6,21 +7,25 @@ fn run(cmd: &mut Command) {
     assert!(cmd.status().unwrap().success(), "{cmd:?} failed");
 }
 
+fn configure(src: &str, build: &str) -> Command {
+    let mut cmd = Command::new("cmake");
+    cmd.args(["-S", src, "-B", build, "-DCMAKE_BUILD_TYPE=Release"]);
+    cmd
+}
+
 fn main() {
+    let src = format!("{}/hoshidicts", env::var("CARGO_MANIFEST_DIR").unwrap());
+    let build = format!("{}/build", env::var("OUT_DIR").unwrap());
+
     assert!(
-        Path::new("hoshidicts/CMakeLists.txt").is_file(),
+        Path::new(&src).join("CMakeLists.txt").is_file(),
         "hoshidicts is empty - run `git submodule update --init --recursive`"
     );
 
-    let build = format!("{}/build", env::var("OUT_DIR").unwrap());
-
-    run(Command::new("cmake").args([
-        "-S",
-        "hoshidicts",
-        "-B",
-        &build,
-        "-DCMAKE_BUILD_TYPE=Release",
-    ]));
+    if !configure(&src, &build).status().unwrap().success() {
+        fs::remove_dir_all(&build).ok();
+        run(&mut configure(&src, &build));
+    }
     run(Command::new("cmake").args(["--build", &build, "--target", "hoshidicts", "--parallel"]));
 
     for dir in [
