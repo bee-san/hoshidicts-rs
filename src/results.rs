@@ -12,7 +12,14 @@ pub(crate) fn slice<'a, T>(ptr: *const T, len: usize) -> &'a [T] {
 
 impl ffi::hd_str {
     fn as_str(&self) -> &str {
-        std::str::from_utf8(slice(self.ptr.cast(), self.len)).unwrap()
+        let bytes = slice(self.ptr.cast(), self.len);
+        match std::str::from_utf8(bytes) {
+            Ok(text) => text,
+            // Dictionary bytes are attacker- and corruption-controlled, so a bad
+            // encoding must not take the process down from inside an accessor.
+            // The prefix is valid by construction, so this cannot panic.
+            Err(error) => std::str::from_utf8(&bytes[..error.valid_up_to()]).unwrap_or_default(),
+        }
     }
 }
 
@@ -300,5 +307,43 @@ impl LookupResults {
 impl Drop for LookupResults {
     fn drop(&mut self) {
         unsafe { ffi::hd_lookup_results_free(self.ptr.as_ptr()) }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn borrowed(bytes: &[u8]) -> ffi::hd_str {
+        ffi::hd_str {
+            ptr: bytes.as_ptr().cast(),
+            len: bytes.len(),
+        }
+    }
+
+    #[test]
+    fn valid_utf8_is_returned_whole() {
+        assert_eq!(borrowed("蜂が好き".as_bytes()).as_str(), "蜂が好き");
+    }
+
+    #[test]
+    fn invalid_utf8_truncates_instead_of_panicking() {
+        // "蜂" followed by a half-written "が", as a corrupt glossary blob gives.
+        let bytes = [0xe8, 0x9c, 0x82, 0xe3, 0x81];
+        assert_eq!(borrowed(&bytes).as_str(), "蜂");
+    }
+
+    #[test]
+    fn a_leading_invalid_byte_yields_an_empty_string() {
+        assert_eq!(borrowed(&[0xff, 0xfe]).as_str(), "");
+    }
+
+    #[test]
+    fn an_empty_string_does_not_dereference_the_pointer() {
+        let empty = ffi::hd_str {
+            ptr: std::ptr::null(),
+            len: 0,
+        };
+        assert_eq!(empty.as_str(), "");
     }
 }
