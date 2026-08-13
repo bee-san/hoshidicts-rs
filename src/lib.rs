@@ -87,6 +87,16 @@ pub fn import(
     result
 }
 
+// SAFETY: the native handles have no thread affinity. They own plain heap data
+// and memory-mapped dictionary files, and no part of the C API touches
+// thread-local state, so ownership can move between threads. They are
+// deliberately not `Sync`: concurrent use still has to be serialized by the
+// caller.
+unsafe impl Send for Deinflector {}
+unsafe impl Send for Query {}
+unsafe impl Send for Lookup<'_> {}
+unsafe impl Send for OwnedLookup {}
+
 pub struct Deinflector(NonNull<ffi::hd_deinflector>);
 
 impl Deinflector {
@@ -220,29 +230,86 @@ impl<'a> Lookup<'a> {
         max_results: c_int,
         scan_length: usize,
     ) -> Result<LookupResults, Error> {
-        let lookup_string = cstr(lookup_string)?;
-        let mut results = null();
-        let mut count = 0;
-        let ptr = unsafe {
-            ffi::hd_lookup_run(
-                self.0.as_ptr(),
-                lookup_string.as_ptr(),
-                max_results,
-                scan_length,
-                &mut results,
-                &mut count,
-            )
-        };
-        Ok(LookupResults {
-            ptr: NonNull::new(ptr).ok_or(Error::Failed)?,
-            results,
-            count,
-        })
+        run_lookup(self.0.as_ptr(), lookup_string, max_results, scan_length)
     }
 }
 
 impl Drop for Lookup<'_> {
     fn drop(&mut self) {
         unsafe { ffi::hd_lookup_free(self.0.as_ptr()) }
+    }
+}
+
+fn run_lookup(
+    lookup: *const ffi::hd_lookup,
+    lookup_string: &str,
+    max_results: c_int,
+    scan_length: usize,
+) -> Result<LookupResults, Error> {
+    let lookup_string = cstr(lookup_string)?;
+    let mut results = null();
+    let mut count = 0;
+    let ptr = unsafe {
+        ffi::hd_lookup_run(
+            lookup,
+            lookup_string.as_ptr(),
+            max_results,
+            scan_length,
+            &mut results,
+            &mut count,
+        )
+    };
+    Ok(LookupResults {
+        ptr: NonNull::new(ptr).ok_or(Error::Failed)?,
+        results,
+        count,
+    })
+}
+
+/// A [`Lookup`] that owns the [`Query`] and [`Deinflector`] it is built from.
+///
+/// [`Lookup`] borrows both, so keeping the three together in one struct makes
+/// that struct self-referential. This owns them instead, so it can be stored in
+/// a field, returned from a function, or moved to a worker thread as one value.
+pub struct OwnedLookup {
+    // Declared first so it is freed before the objects it points at.
+    lookup: NonNull<ffi::hd_lookup>,
+    query: Query,
+    _deinflector: Deinflector,
+}
+
+impl OwnedLookup {
+    pub fn new(query: Query, deinflector: Deinflector) -> Self {
+        let lookup = unsafe { ffi::hd_lookup_new(query.0.as_ptr(), deinflector.0.as_ptr()) };
+        Self {
+            lookup: NonNull::new(lookup).unwrap(),
+            query,
+            _deinflector: deinflector,
+        }
+    }
+
+    /// The owned query, for styles, media, and direct term or kanji lookups.
+    pub fn query(&self) -> &Query {
+        &self.query
+    }
+
+    pub fn run(
+        &self,
+        lookup_string: &str,
+        max_results: c_int,
+        scan_length: usize,
+    ) -> Result<LookupResults, Error> {
+        run_lookup(
+            self.lookup.as_ptr(),
+            lookup_string,
+            max_results,
+            scan_length,
+        )
+    }
+}
+
+impl Drop for OwnedLookup {
+    fn drop(&mut self) {
+        unsafe { ffi::hd_lookup_free(self.lookup.as_ptr()) }
     }
 }
