@@ -9,6 +9,5 @@ readme = "README.md"
 license = "GPL-3.0-or-later"
 keywords = ["japanese", "dictionary", "yomitan", "deinflection"]
 categories = ["api-bindings", "text-processing"]
-# Consumed as a Git dependency, not from crates.io.
 publish = false
 links = "hoshidicts"

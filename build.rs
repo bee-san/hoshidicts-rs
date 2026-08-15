@@ -7,10 +7,6 @@ fn run(cmd: &mut Command) {
     assert!(cmd.status().unwrap().success(), "{cmd:?} failed");
 }
 
-// rustc links through its own driver (`cc`), whose default `-lstdc++` can
-// resolve to an older runtime than the one CMake compiled the C++ objects
-// against, leaving symbols like `_M_replace_cold` undefined. Search the
-// compiler's own runtime directory so the link matches the compile.
 fn cxx_runtime_dir(build: &str, runtime: &str) -> Option<String> {
     let cache = fs::read_to_string(Path::new(build).join("CMakeCache.txt")).ok()?;
     let compiler = cache
@@ -36,8 +32,6 @@ fn configure(src: &str, build: &str) -> Command {
         "-B",
         build,
         "-DCMAKE_BUILD_TYPE=Release",
-        // rustc links position-independent binaries, so the static archives it
-        // pulls in have to be position-independent too.
         "-DCMAKE_POSITION_INDEPENDENT_CODE=ON",
     ]);
     cmd
@@ -57,7 +51,6 @@ fn main() {
         fs::remove_dir_all(&build).ok();
         run(&mut configure(&src, &build));
     }
-    // Multi-config generators ignore CMAKE_BUILD_TYPE and need --config.
     run(Command::new("cmake").args([
         "--build",
         &build,
@@ -75,14 +68,12 @@ fn main() {
         "external/zstd/build/cmake/lib",
     ] {
         println!("cargo:rustc-link-search=native={build}/{dir}");
-        // Multi-config generators write archives to a per-config subdirectory.
         let config_dir = format!("{build}/{dir}/Release");
         if Path::new(&config_dir).is_dir() {
             println!("cargo:rustc-link-search=native={config_dir}");
         }
     }
 
-    // MSVC renames the static archives so they cannot clash with import libraries.
     let (utf8proc, deflate, zstd) = match msvc {
         true => ("utf8proc_static", "deflatestatic", "zstd_static"),
         false => ("utf8proc", "deflate", "zstd"),
@@ -91,7 +82,6 @@ fn main() {
         println!("cargo:rustc-link-lib=static={lib}");
     }
 
-    // MSVC links the C++ runtime on its own.
     if !msvc {
         let runtime = match env::var("CARGO_CFG_TARGET_OS").unwrap().as_str() {
             "linux" | "android" => "stdc++",

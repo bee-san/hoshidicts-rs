@@ -1,38 +1,3 @@
-//! Safe Rust bindings for the [hoshidicts](https://github.com/Manhhao/hoshidicts)
-//! Yomitan-dictionary engine.
-//!
-//! # Example
-//!
-//! ```no_run
-//! use hoshidicts::{Deinflector, LookupFrequencyOrder, LookupOptions, OwnedLookup, Query};
-//!
-//! let mut query = Query::new();
-//! query.add_term_dict("jitendex")?;
-//! query.add_freq_dict("BCCWJ")?;
-//!
-//! let lookup = OwnedLookup::new(query, Deinflector::new());
-//! let options = LookupOptions {
-//!     frequency_dictionary: Some("BCCWJ"),
-//!     frequency_order: LookupFrequencyOrder::Ascending,
-//!     primary_reading: None,
-//! };
-//! let results = lookup.run_with_options("蜂が好きです", 32, 16, &options)?;
-//! for result in results.results() {
-//!     println!("{}", result.term().expression());
-//! }
-//! # Ok::<(), hoshidicts::Error>(())
-//! ```
-//!
-//! # Threading
-//!
-//! The handles are [`Send`] but deliberately not [`Sync`]: an owner may move to
-//! another thread, but concurrent calls must be serialized by the caller.
-//!
-//! ```compile_fail
-//! fn assert_sync<T: Sync>() {}
-//! assert_sync::<hoshidicts::OwnedLookup>();
-//! ```
-
 mod ffi;
 mod results;
 
@@ -122,11 +87,6 @@ pub fn import(
     result
 }
 
-// SAFETY: the native handles have no thread affinity. They own plain heap data
-// and memory-mapped dictionary files, and no part of the C API touches
-// thread-local state, so ownership can move between threads. They are
-// deliberately not `Sync`: concurrent use still has to be serialized by the
-// caller.
 unsafe impl Send for Deinflector {}
 unsafe impl Send for Query {}
 unsafe impl Send for Lookup<'_> {}
@@ -291,9 +251,6 @@ impl Drop for Lookup<'_> {
     }
 }
 
-/// How a lookup ranks results using the selected frequency dictionary.
-///
-/// Mirrors the engine's `hd_lookup_frequency_order`.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum LookupFrequencyOrder {
     #[default]
@@ -314,10 +271,6 @@ impl LookupFrequencyOrder {
     }
 }
 
-/// Optional tuning for a single lookup.
-///
-/// The string fields are borrowed for the duration of the call only. An empty
-/// field is passed to the engine as a null, zero-length string.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct LookupOptions<'a> {
     pub frequency_dictionary: Option<&'a str>,
@@ -372,8 +325,6 @@ fn run_lookup_with_options(
     options: &LookupOptions<'_>,
 ) -> Result<LookupResults, Error> {
     let lookup_string = cstr(lookup_string)?;
-    // The `hd_str` fields borrow `options`, which the caller keeps alive across
-    // this call, so the pointers stay valid for the whole native call.
     let ffi_options = ffi::hd_lookup_options {
         frequency_dictionary: hd_str(options.frequency_dictionary),
         frequency_order: options.frequency_order.to_ffi() as c_int,
@@ -399,13 +350,7 @@ fn run_lookup_with_options(
     })
 }
 
-/// A [`Lookup`] that owns the [`Query`] and [`Deinflector`] it is built from.
-///
-/// [`Lookup`] borrows both, so keeping the three together in one struct makes
-/// that struct self-referential. This owns them instead, so it can be stored in
-/// a field, returned from a function, or moved to a worker thread as one value.
 pub struct OwnedLookup {
-    // Declared first so it is freed before the objects it points at.
     lookup: NonNull<ffi::hd_lookup>,
     query: Query,
     _deinflector: Deinflector,
@@ -421,7 +366,6 @@ impl OwnedLookup {
         }
     }
 
-    /// The owned query, for styles, media, and direct term or kanji lookups.
     pub fn query(&self) -> &Query {
         &self.query
     }
