@@ -2,6 +2,12 @@
 name = "hoshidicts"
 version = "0.1.0"
 edition = "2024"
+rust-version = "1.85"
+description = "Safe Rust bindings for the hoshidicts Yomitan-dictionary engine"
 repository = "https://github.com/Manhhao/hoshidicts-rs"
+readme = "README.md"
 license = "GPL-3.0-or-later"
+keywords = ["japanese", "dictionary", "yomitan", "deinflection"]
+categories = ["api-bindings", "text-processing"]
+publish = false
 links = "hoshidicts"

@@ -117,6 +117,22 @@ pub struct hd_lookup_result {
     pub preprocessor_steps: i32,
 }
 
+#[repr(i32)]
+#[derive(Clone, Copy)]
+pub enum hd_lookup_frequency_order {
+    Auto = 0,
+    Ascending = 1,
+    Descending = 2,
+    Disabled = 3,
+}
+
+#[repr(C)]
+pub struct hd_lookup_options {
+    pub frequency_dictionary: hd_str,
+    pub frequency_order: i32,
+    pub primary_reading: hd_str,
+}
+
 unsafe extern "C" {
     pub fn hd_import(
         zip_path: *const c_char,
@@ -183,5 +199,46 @@ unsafe extern "C" {
         out_results: *mut *const hd_lookup_result,
         out_count: *mut usize,
     ) -> *mut hd_lookup_results;
+    pub fn hd_lookup_run_with_options(
+        l: *const hd_lookup,
+        lookup_string: *const c_char,
+        max_results: c_int,
+        scan_length: usize,
+        options: *const hd_lookup_options,
+        out_results: *mut *const hd_lookup_result,
+        out_count: *mut usize,
+    ) -> *mut hd_lookup_results;
     pub fn hd_lookup_results_free(r: *mut hd_lookup_results);
+}
+
+#[cfg(test)]
+mod abi {
+    use super::*;
+    use std::mem::{align_of, offset_of, size_of};
+
+    #[test]
+    fn hd_str_layout() {
+        assert_eq!(size_of::<hd_str>(), 2 * size_of::<usize>());
+        assert_eq!(align_of::<hd_str>(), align_of::<usize>());
+        assert_eq!(offset_of!(hd_str, ptr), 0);
+        assert_eq!(offset_of!(hd_str, len), size_of::<usize>());
+    }
+
+    #[test]
+    fn hd_lookup_options_layout() {
+        let word = size_of::<usize>();
+        assert_eq!(offset_of!(hd_lookup_options, frequency_dictionary), 0);
+        assert_eq!(offset_of!(hd_lookup_options, frequency_order), 2 * word);
+        assert_eq!(offset_of!(hd_lookup_options, primary_reading), 3 * word);
+        assert_eq!(size_of::<hd_lookup_options>(), 5 * word);
+        assert_eq!(align_of::<hd_lookup_options>(), align_of::<usize>());
+    }
+
+    #[test]
+    fn frequency_order_discriminants() {
+        assert_eq!(hd_lookup_frequency_order::Auto as i32, 0);
+        assert_eq!(hd_lookup_frequency_order::Ascending as i32, 1);
+        assert_eq!(hd_lookup_frequency_order::Descending as i32, 2);
+        assert_eq!(hd_lookup_frequency_order::Disabled as i32, 3);
+    }
 }

@@ -7,6 +7,23 @@ fn run(cmd: &mut Command) {
     assert!(cmd.status().unwrap().success(), "{cmd:?} failed");
 }
 
+fn cxx_runtime_dir(build: &str, runtime: &str) -> Option<String> {
+    let cache = fs::read_to_string(Path::new(build).join("CMakeCache.txt")).ok()?;
+    let compiler = cache
+        .lines()
+        .find_map(|line| line.strip_prefix("CMAKE_CXX_COMPILER:FILEPATH="))?;
+    let output = Command::new(compiler)
+        .arg(format!("-print-file-name=lib{runtime}.so"))
+        .output()
+        .ok()?;
+    let path = String::from_utf8(output.stdout).ok()?;
+    let path = Path::new(path.trim());
+    match path.is_absolute() {
+        true => Some(path.parent()?.to_str()?.to_owned()),
+        false => None,
+    }
+}
+
 fn configure(src: &str, build: &str) -> Command {
     let mut cmd = Command::new("cmake");
     cmd.args([
@@ -15,8 +32,6 @@ fn configure(src: &str, build: &str) -> Command {
         "-B",
         build,
         "-DCMAKE_BUILD_TYPE=Release",
-        // rustc links position-independent binaries, so the static archives it
-        // pulls in have to be position-independent too.
         "-DCMAKE_POSITION_INDEPENDENT_CODE=ON",
     ]);
     cmd
@@ -36,7 +51,6 @@ fn main() {
         fs::remove_dir_all(&build).ok();
         run(&mut configure(&src, &build));
     }
-    // Multi-config generators ignore CMAKE_BUILD_TYPE and need --config.
     run(Command::new("cmake").args([
         "--build",
         &build,
@@ -54,14 +68,12 @@ fn main() {
         "external/zstd/build/cmake/lib",
     ] {
         println!("cargo:rustc-link-search=native={build}/{dir}");
-        // Multi-config generators write archives to a per-config subdirectory.
         let config_dir = format!("{build}/{dir}/Release");
         if Path::new(&config_dir).is_dir() {
             println!("cargo:rustc-link-search=native={config_dir}");
         }
     }
 
-    // MSVC renames the static archives so they cannot clash with import libraries.
     let (utf8proc, deflate, zstd) = match msvc {
         true => ("utf8proc_static", "deflatestatic", "zstd_static"),
         false => ("utf8proc", "deflate", "zstd"),
@@ -70,15 +82,15 @@ fn main() {
         println!("cargo:rustc-link-lib=static={lib}");
     }
 
-    // MSVC links the C++ runtime on its own.
     if !msvc {
-        println!(
-            "cargo:rustc-link-lib={}",
-            match env::var("CARGO_CFG_TARGET_OS").unwrap().as_str() {
-                "linux" | "android" => "stdc++",
-                _ => "c++",
-            }
-        );
+        let runtime = match env::var("CARGO_CFG_TARGET_OS").unwrap().as_str() {
+            "linux" | "android" => "stdc++",
+            _ => "c++",
+        };
+        if let Some(dir) = cxx_runtime_dir(&build, runtime) {
+            println!("cargo:rustc-link-search=native={dir}");
+        }
+        println!("cargo:rustc-link-lib={runtime}");
     }
 
     println!("cargo:rerun-if-changed=hoshidicts/src");
