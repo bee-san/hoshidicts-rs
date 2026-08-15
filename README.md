@@ -37,7 +37,6 @@ let results = lookup.run_with_options("蜂が好きです", 32, 16, &options)?;
 for result in results.results() {
     println!("{}", result.term().expression());
 }
-# Ok::<(), hoshidicts::Error>(())
 ```
 
 `run` keeps its default-options behavior; `run_with_options` adds the
