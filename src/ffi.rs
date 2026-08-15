@@ -117,6 +117,25 @@ pub struct hd_lookup_result {
     pub preprocessor_steps: i32,
 }
 
+// Mirrors `hd_lookup_frequency_order` in hoshidicts_c.h. The discriminants are
+// part of the ABI, so they are pinned explicitly.
+#[repr(i32)]
+#[derive(Clone, Copy)]
+pub enum hd_lookup_frequency_order {
+    Auto = 0,
+    Ascending = 1,
+    Descending = 2,
+    Disabled = 3,
+}
+
+// Mirrors `hd_lookup_options` in hoshidicts_c.h. Field order is ABI-significant.
+#[repr(C)]
+pub struct hd_lookup_options {
+    pub frequency_dictionary: hd_str,
+    pub frequency_order: i32,
+    pub primary_reading: hd_str,
+}
+
 unsafe extern "C" {
     pub fn hd_import(
         zip_path: *const c_char,
@@ -183,5 +202,57 @@ unsafe extern "C" {
         out_results: *mut *const hd_lookup_result,
         out_count: *mut usize,
     ) -> *mut hd_lookup_results;
+    pub fn hd_lookup_run_with_options(
+        l: *const hd_lookup,
+        lookup_string: *const c_char,
+        max_results: c_int,
+        scan_length: usize,
+        options: *const hd_lookup_options,
+        out_results: *mut *const hd_lookup_result,
+        out_count: *mut usize,
+    ) -> *mut hd_lookup_results;
     pub fn hd_lookup_results_free(r: *mut hd_lookup_results);
+}
+
+#[cfg(test)]
+mod abi {
+    use super::*;
+    use std::mem::{align_of, offset_of, size_of};
+
+    // hd_str is {const char* ptr; size_t len;} on the platforms hoshidicts
+    // targets, so it is two pointer-sized words.
+    #[test]
+    fn hd_str_layout() {
+        assert_eq!(size_of::<hd_str>(), 2 * size_of::<usize>());
+        assert_eq!(align_of::<hd_str>(), align_of::<usize>());
+        assert_eq!(offset_of!(hd_str, ptr), 0);
+        assert_eq!(offset_of!(hd_str, len), size_of::<usize>());
+    }
+
+    // Must match, field-for-field and in order,
+    //   struct hd_lookup_options {
+    //     hd_str  frequency_dictionary;
+    //     int32_t frequency_order;
+    //     hd_str  primary_reading;
+    //   };
+    // Reordering these (e.g. to PR #549's old fork layout) is an ABI bug.
+    #[test]
+    fn hd_lookup_options_layout() {
+        let word = size_of::<usize>();
+        assert_eq!(offset_of!(hd_lookup_options, frequency_dictionary), 0);
+        assert_eq!(offset_of!(hd_lookup_options, frequency_order), 2 * word);
+        // int32_t is padded up to the pointer alignment before the next hd_str.
+        assert_eq!(offset_of!(hd_lookup_options, primary_reading), 3 * word);
+        assert_eq!(size_of::<hd_lookup_options>(), 5 * word);
+        assert_eq!(align_of::<hd_lookup_options>(), align_of::<usize>());
+    }
+
+    // The enum is passed to C as an int32_t, so its discriminants are ABI.
+    #[test]
+    fn frequency_order_discriminants() {
+        assert_eq!(hd_lookup_frequency_order::Auto as i32, 0);
+        assert_eq!(hd_lookup_frequency_order::Ascending as i32, 1);
+        assert_eq!(hd_lookup_frequency_order::Descending as i32, 2);
+        assert_eq!(hd_lookup_frequency_order::Disabled as i32, 3);
+    }
 }

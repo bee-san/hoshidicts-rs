@@ -1,3 +1,38 @@
+//! Safe Rust bindings for the [hoshidicts](https://github.com/Manhhao/hoshidicts)
+//! Yomitan-dictionary engine.
+//!
+//! # Example
+//!
+//! ```no_run
+//! use hoshidicts::{Deinflector, LookupFrequencyOrder, LookupOptions, OwnedLookup, Query};
+//!
+//! let mut query = Query::new();
+//! query.add_term_dict("jitendex")?;
+//! query.add_freq_dict("BCCWJ")?;
+//!
+//! let lookup = OwnedLookup::new(query, Deinflector::new());
+//! let options = LookupOptions {
+//!     frequency_dictionary: Some("BCCWJ"),
+//!     frequency_order: LookupFrequencyOrder::Ascending,
+//!     primary_reading: None,
+//! };
+//! let results = lookup.run_with_options("蜂が好きです", 32, 16, &options)?;
+//! for result in results.results() {
+//!     println!("{}", result.term().expression());
+//! }
+//! # Ok::<(), hoshidicts::Error>(())
+//! ```
+//!
+//! # Threading
+//!
+//! The handles are [`Send`] but deliberately not [`Sync`]: an owner may move to
+//! another thread, but concurrent calls must be serialized by the caller.
+//!
+//! ```compile_fail
+//! fn assert_sync<T: Sync>() {}
+//! assert_sync::<hoshidicts::OwnedLookup>();
+//! ```
+
 mod ffi;
 mod results;
 
@@ -232,11 +267,74 @@ impl<'a> Lookup<'a> {
     ) -> Result<LookupResults, Error> {
         run_lookup(self.0.as_ptr(), lookup_string, max_results, scan_length)
     }
+
+    pub fn run_with_options(
+        &self,
+        lookup_string: &str,
+        max_results: c_int,
+        scan_length: usize,
+        options: &LookupOptions<'_>,
+    ) -> Result<LookupResults, Error> {
+        run_lookup_with_options(
+            self.0.as_ptr(),
+            lookup_string,
+            max_results,
+            scan_length,
+            options,
+        )
+    }
 }
 
 impl Drop for Lookup<'_> {
     fn drop(&mut self) {
         unsafe { ffi::hd_lookup_free(self.0.as_ptr()) }
+    }
+}
+
+/// How a lookup ranks results using the selected frequency dictionary.
+///
+/// Mirrors the engine's `hd_lookup_frequency_order`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum LookupFrequencyOrder {
+    #[default]
+    Auto,
+    Ascending,
+    Descending,
+    Disabled,
+}
+
+impl LookupFrequencyOrder {
+    fn to_ffi(self) -> ffi::hd_lookup_frequency_order {
+        match self {
+            LookupFrequencyOrder::Auto => ffi::hd_lookup_frequency_order::Auto,
+            LookupFrequencyOrder::Ascending => ffi::hd_lookup_frequency_order::Ascending,
+            LookupFrequencyOrder::Descending => ffi::hd_lookup_frequency_order::Descending,
+            LookupFrequencyOrder::Disabled => ffi::hd_lookup_frequency_order::Disabled,
+        }
+    }
+}
+
+/// Optional tuning for a single lookup.
+///
+/// The string fields are borrowed for the duration of the call only. An empty
+/// field is passed to the engine as a null, zero-length string.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct LookupOptions<'a> {
+    pub frequency_dictionary: Option<&'a str>,
+    pub frequency_order: LookupFrequencyOrder,
+    pub primary_reading: Option<&'a str>,
+}
+
+fn hd_str(value: Option<&str>) -> ffi::hd_str {
+    match value {
+        Some(s) => ffi::hd_str {
+            ptr: s.as_ptr().cast(),
+            len: s.len(),
+        },
+        None => ffi::hd_str {
+            ptr: null(),
+            len: 0,
+        },
     }
 }
 
@@ -255,6 +353,41 @@ fn run_lookup(
             lookup_string.as_ptr(),
             max_results,
             scan_length,
+            &mut results,
+            &mut count,
+        )
+    };
+    Ok(LookupResults {
+        ptr: NonNull::new(ptr).ok_or(Error::Failed)?,
+        results,
+        count,
+    })
+}
+
+fn run_lookup_with_options(
+    lookup: *const ffi::hd_lookup,
+    lookup_string: &str,
+    max_results: c_int,
+    scan_length: usize,
+    options: &LookupOptions<'_>,
+) -> Result<LookupResults, Error> {
+    let lookup_string = cstr(lookup_string)?;
+    // The `hd_str` fields borrow `options`, which the caller keeps alive across
+    // this call, so the pointers stay valid for the whole native call.
+    let ffi_options = ffi::hd_lookup_options {
+        frequency_dictionary: hd_str(options.frequency_dictionary),
+        frequency_order: options.frequency_order.to_ffi() as c_int,
+        primary_reading: hd_str(options.primary_reading),
+    };
+    let mut results = null();
+    let mut count = 0;
+    let ptr = unsafe {
+        ffi::hd_lookup_run_with_options(
+            lookup,
+            lookup_string.as_ptr(),
+            max_results,
+            scan_length,
+            &ffi_options,
             &mut results,
             &mut count,
         )
@@ -304,6 +437,22 @@ impl OwnedLookup {
             lookup_string,
             max_results,
             scan_length,
+        )
+    }
+
+    pub fn run_with_options(
+        &self,
+        lookup_string: &str,
+        max_results: c_int,
+        scan_length: usize,
+        options: &LookupOptions<'_>,
+    ) -> Result<LookupResults, Error> {
+        run_lookup_with_options(
+            self.lookup.as_ptr(),
+            lookup_string,
+            max_results,
+            scan_length,
+            options,
         )
     }
 }
