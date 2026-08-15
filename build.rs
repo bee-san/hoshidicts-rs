@@ -7,6 +7,27 @@ fn run(cmd: &mut Command) {
     assert!(cmd.status().unwrap().success(), "{cmd:?} failed");
 }
 
+// rustc links through its own driver (`cc`), whose default `-lstdc++` can
+// resolve to an older runtime than the one CMake compiled the C++ objects
+// against, leaving symbols like `_M_replace_cold` undefined. Search the
+// compiler's own runtime directory so the link matches the compile.
+fn cxx_runtime_dir(build: &str, runtime: &str) -> Option<String> {
+    let cache = fs::read_to_string(Path::new(build).join("CMakeCache.txt")).ok()?;
+    let compiler = cache
+        .lines()
+        .find_map(|line| line.strip_prefix("CMAKE_CXX_COMPILER:FILEPATH="))?;
+    let output = Command::new(compiler)
+        .arg(format!("-print-file-name=lib{runtime}.so"))
+        .output()
+        .ok()?;
+    let path = String::from_utf8(output.stdout).ok()?;
+    let path = Path::new(path.trim());
+    match path.is_absolute() {
+        true => Some(path.parent()?.to_str()?.to_owned()),
+        false => None,
+    }
+}
+
 fn configure(src: &str, build: &str) -> Command {
     let mut cmd = Command::new("cmake");
     cmd.args([
@@ -72,13 +93,14 @@ fn main() {
 
     // MSVC links the C++ runtime on its own.
     if !msvc {
-        println!(
-            "cargo:rustc-link-lib={}",
-            match env::var("CARGO_CFG_TARGET_OS").unwrap().as_str() {
-                "linux" | "android" => "stdc++",
-                _ => "c++",
-            }
-        );
+        let runtime = match env::var("CARGO_CFG_TARGET_OS").unwrap().as_str() {
+            "linux" | "android" => "stdc++",
+            _ => "c++",
+        };
+        if let Some(dir) = cxx_runtime_dir(&build, runtime) {
+            println!("cargo:rustc-link-search=native={dir}");
+        }
+        println!("cargo:rustc-link-lib={runtime}");
     }
 
     println!("cargo:rerun-if-changed=hoshidicts/src");
