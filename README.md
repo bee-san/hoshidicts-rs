@@ -3,13 +3,6 @@
 Safe Rust bindings for [hoshidicts](https://github.com/Manhhao/hoshidicts), a
 Yomitan-dictionary import and lookup engine.
 
-The vendored C++ engine is a GameSentenceMiner-oriented fork
-([bee-san/hoshidicts](https://github.com/bee-san/hoshidicts), branch
-`feat/gsm-unified-engine`) of the upstream Manhhao/hoshidicts engine. It carries
-the upstream typed lookup options C API (frequency ordering + primary reading)
-together with the `.hoshidicts_4` dictionary marker (read + write) and the
-`MAX_KANJI_RESULT_ENTRIES` guard that GameSentenceMiner depends on.
-
 ## Building
 
 The C++ engine is a submodule and needs a C++23 toolchain (GCC 14+, Clang 17+,
