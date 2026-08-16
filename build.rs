@@ -24,7 +24,7 @@ fn cxx_runtime_dir(build: &str, runtime: &str) -> Option<String> {
     }
 }
 
-fn configure(src: &str, build: &str) -> Command {
+fn configure(src: &str, build: &str, msvc: bool) -> Command {
     let mut cmd = Command::new("cmake");
     cmd.args([
         "-S",
@@ -34,6 +34,9 @@ fn configure(src: &str, build: &str) -> Command {
         "-DCMAKE_BUILD_TYPE=Release",
         "-DCMAKE_POSITION_INDEPENDENT_CODE=ON",
     ]);
+    if msvc {
+        cmd.arg("-DCMAKE_CXX_FLAGS=/Zc:__cplusplus");
+    }
     cmd
 }
 
@@ -47,9 +50,9 @@ fn main() {
         "hoshidicts is empty - run `git submodule update --init --recursive`"
     );
 
-    if !configure(&src, &build).status().unwrap().success() {
+    if !configure(&src, &build, msvc).status().unwrap().success() {
         fs::remove_dir_all(&build).ok();
-        run(&mut configure(&src, &build));
+        run(&mut configure(&src, &build, msvc));
     }
     run(Command::new("cmake").args([
         "--build",
