@@ -160,7 +160,12 @@ unsafe extern "C" {
         payload_version: *mut u32,
         error: *mut *mut c_char,
     ) -> c_int;
-    pub fn hd_container_error_free(error: *mut c_char);
+    pub fn hd_container_index(
+        container_path: *const c_char,
+        index_json: *mut *mut c_char,
+        error: *mut *mut c_char,
+    ) -> c_int;
+    pub fn hd_container_string_free(value: *mut c_char);
 
     pub fn hd_deinflector_new() -> *mut hd_deinflector;
     pub fn hd_deinflector_free(d: *mut hd_deinflector);

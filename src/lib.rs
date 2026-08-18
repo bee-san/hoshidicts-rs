@@ -95,8 +95,17 @@ unsafe fn take_error(ptr: *mut c_char) -> Error {
         return Error::Failed;
     }
     let message = unsafe { string(ptr) };
-    unsafe { ffi::hd_container_error_free(ptr) };
+    unsafe { ffi::hd_container_string_free(ptr) };
     Error::Container(message)
+}
+
+unsafe fn take_string(ptr: *mut c_char) -> Option<String> {
+    if ptr.is_null() {
+        return None;
+    }
+    let value = unsafe { string(ptr) };
+    unsafe { ffi::hd_container_string_free(ptr) };
+    Some(value)
 }
 
 /// Packs an imported dictionary directory into a single `.hoshi` container and returns its
@@ -131,6 +140,21 @@ pub fn verify(container: impl AsRef<Path>) -> Result<u32, Error> {
     }
 
     Ok(payload_version)
+}
+
+/// Returns the summary an import wrote, as JSON: the dictionary's title, revision and entry
+/// counts. Enough to identify a container and tell a term dictionary from a kanji or IPA one
+/// without loading it.
+pub fn index(container: impl AsRef<Path>) -> Result<String, Error> {
+    let container = cpath(container.as_ref())?;
+
+    let mut json = null_mut();
+    let mut error = null_mut();
+    if unsafe { ffi::hd_container_index(container.as_ptr(), &mut json, &mut error) } != 0 {
+        return Err(unsafe { take_error(error) });
+    }
+
+    unsafe { take_string(json) }.ok_or(Error::Failed)
 }
 
 unsafe impl Send for Deinflector {}

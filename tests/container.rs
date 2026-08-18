@@ -2,7 +2,7 @@ use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use hoshidicts::{Query, Term, import, pack, verify};
+use hoshidicts::{Query, Term, import, index, pack, verify};
 
 fn workdir(name: &str) -> PathBuf {
     let dir = env::temp_dir().join(format!("hoshidicts-rs-container-{name}"));
@@ -128,6 +128,30 @@ fn container_matches_the_directory_it_was_packed_from() {
     assert!(from_directory.contains("    glossary "));
     assert!(from_directory.contains("media media/sample.txt generated"));
     assert_eq!(from_directory, from_container);
+}
+
+#[test]
+fn index_identifies_a_container_without_loading_it() {
+    let workdir = workdir("index");
+    let fixture =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("hoshidicts/tests/fixtures/dictionary.zip");
+
+    let imported = import(&fixture, &workdir, false).unwrap();
+    let directory = workdir.join(&imported.title);
+    let container = workdir.join("dictionary.hoshi");
+    pack(&directory, &container).unwrap();
+
+    // byte for byte the index.json the import wrote, so a caller can key settings on the
+    // title and revision and classify the dictionary from the counts
+    let json = index(&container).unwrap();
+    assert_eq!(
+        json,
+        fs::read_to_string(directory.join("index.json")).unwrap()
+    );
+    assert!(json.contains(&format!("\"title\":\"{}\"", imported.title)));
+
+    assert!(index(&directory).is_err());
+    assert!(index(workdir.join("absent.hoshi")).is_err());
 }
 
 #[test]
