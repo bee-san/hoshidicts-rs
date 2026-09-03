@@ -90,15 +90,6 @@ pub fn import(
     result
 }
 
-unsafe fn take_error(ptr: *mut c_char) -> Error {
-    if ptr.is_null() {
-        return Error::Failed;
-    }
-    let message = unsafe { string(ptr) };
-    unsafe { ffi::hd_container_string_free(ptr) };
-    Error::Container(message)
-}
-
 unsafe fn take_string(ptr: *mut c_char) -> Option<String> {
     if ptr.is_null() {
         return None;
@@ -108,8 +99,10 @@ unsafe fn take_string(ptr: *mut c_char) -> Option<String> {
     Some(value)
 }
 
-/// Packs an imported dictionary directory into a single `.hoshi` container and returns its
-/// size in bytes. The container is verified before it is moved into place.
+unsafe fn take_error(ptr: *mut c_char) -> Error {
+    unsafe { take_string(ptr) }.map_or(Error::Failed, Error::Container)
+}
+
 pub fn pack(dictionary_dir: impl AsRef<Path>, output: impl AsRef<Path>) -> Result<u64, Error> {
     let dictionary_dir = cpath(dictionary_dir.as_ref())?;
     let output = output.as_ref();
@@ -127,7 +120,6 @@ pub fn pack(dictionary_dir: impl AsRef<Path>, output: impl AsRef<Path>) -> Resul
         .map_err(|_| Error::Failed)
 }
 
-/// Checks every section of a container against its checksum and returns the payload version.
 pub fn verify(container: impl AsRef<Path>) -> Result<u32, Error> {
     let container = cpath(container.as_ref())?;
 
@@ -142,9 +134,6 @@ pub fn verify(container: impl AsRef<Path>) -> Result<u32, Error> {
     Ok(payload_version)
 }
 
-/// Returns the summary an import wrote, as JSON: the dictionary's title, revision and entry
-/// counts. Enough to identify a container and tell a term dictionary from a kanji or IPA one
-/// without loading it.
 pub fn index(container: impl AsRef<Path>) -> Result<String, Error> {
     let container = cpath(container.as_ref())?;
 
